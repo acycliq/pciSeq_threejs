@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Front and Back Different Textures</title>
+  <title>Show Cell Boundaries 3D</title>
   <style>body { margin: 0; }</style>
 
   <script type="importmap">
@@ -18,9 +18,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
 
+// Scene setup
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -30,85 +31,91 @@ controls.enableRotate = true;
 controls.enablePan = true;
 controls.zoomSpeed = 1.2;
 
-// Light
-const light = new THREE.DirectionalLight(0xffffff);
-light.position.set(5, 10, 7.5);
-scene.add(light);
-scene.add(new THREE.AmbientLight(0xffffff));
+// Lights
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+directionalLight.position.set(5, 10, 7.5);
+scene.add(directionalLight);
+scene.add(new THREE.AmbientLight(0x404040));
 
-// Textures
-const textureLoader = new THREE.TextureLoader();
-const frontTexture = textureLoader.load('https://threejs.org/examples/textures/brick_diffuse.jpg'); // Front texture
-const backTexture = textureLoader.load('https://threejs.org/examples/textures/uv_grid_opengl.jpg'); // Back texture
-
-// Materials
-const frontMaterial = new THREE.MeshStandardMaterial({
-  map: frontTexture,
-  side: THREE.FrontSide,
-  metalness: 0.2,
-  roughness: 0.7
-});
-
-const backMaterial = new THREE.MeshStandardMaterial({
-  map: backTexture,
-  side: THREE.BackSide,
-  metalness: 0.2,
-  roughness: 0.7
-});
-
-// Planes
-const planes = [
-  { z: 0, points: [ [1,0], [0.7,0.7], [0,1], [-0.7,0.7], [-1,0], [-0.7,-0.7], [0,-1], [0.7,-0.7] ] },
-  { z: 1, points: [ [0.5,0], [0.35,0.35], [0,0.5], [-0.35,0.35], [-0.5,0], [-0.35,-0.35], [0,-0.5], [0.35,-0.35] ] }
+// Color palette for labels
+const colorPalette = [
+  0xff5555, 0x55ff55, 0x5555ff,
+  0xffff55, 0xff55ff, 0x55ffff,
+  0xffffff
 ];
 
-const pointsPerPlane = planes[0].points.length;
-const vertices = [];
-const uvs = [];
-const indices = [];
+/**
+ * Build a 3D mesh from a map of planeNumber -> [ [x,y], ... ]
+ * @param {Object<string, Array<[number, number]>>} planes
+ * @param {number} color
+ * @returns {THREE.Mesh}
+ */
+function createMeshFromPlanes(planes, color) {
+  const pointsPerPlane = Object.values(planes)[0].length;
+  const planeNumbers = Object.keys(planes)
+    .map(key => parseInt(key, 10))
+    .sort((a, b) => a - b);
 
-for (let p of planes) {
-  for (let [x, y] of p.points) {
-    vertices.push(x, y, p.z);
-    uvs.push((x + 1) / 2, (y + 1) / 2);
+  const vertices = [];
+  const indices = [];
+
+  // Build vertices
+  planeNumbers.forEach(planeNo => {
+    const coords = planes[planeNo];
+    coords.forEach(([x, y]) => {
+      vertices.push(x, y, planeNo);
+    });
+  });
+
+  // Build indices to connect quads across layers
+  for (let i = 0; i < planeNumbers.length - 1; i++) {
+    for (let j = 0; j < pointsPerPlane; j++) {
+      const next = (j + 1) % pointsPerPlane;
+      const lower     = i      * pointsPerPlane + j;
+      const lowerNext = i      * pointsPerPlane + next;
+      const upper     = (i + 1) * pointsPerPlane + j;
+      const upperNext = (i + 1) * pointsPerPlane + next;
+
+      indices.push(lower, lowerNext, upper);
+      indices.push(lowerNext, upperNext, upper);
+    }
   }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(vertices, 3)
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    metalness: 0.1,
+    roughness: 0.8,
+    side: THREE.DoubleSide
+  });
+
+  return new THREE.Mesh(geometry, material);
 }
 
-for (let i = 0; i < pointsPerPlane; i++) {
-  const next = (i + 1) % pointsPerPlane;
+// Load and visualize JSON data
+fetch('cell_boundaries.json')
+  .then(response => response.json())
+  .then(({ cell_boundaries: allBoundaries }) => {
+    Object.entries(allBoundaries).forEach(([label, planes], index) => {
+      const color = colorPalette[index % colorPalette.length];
+      const mesh = createMeshFromPlanes(planes, color);
+      scene.add(mesh);
+    });
+  })
+  .catch(err => console.error('Failed to load JSON', err));
 
-  const lower = i;
-  const lowerNext = next;
-  const upper = i + pointsPerPlane;
-  const upperNext = next + pointsPerPlane;
-
-  // front face
-  indices.push(lower, lowerNext, upper);
-  indices.push(lowerNext, upperNext, upper);
-
-  // back face (reverse order for correct normals)
-  indices.push(upper, upperNext, lowerNext);
-  indices.push(upper, lowerNext, lower);
-}
-
-const geometry = new THREE.BufferGeometry();
-geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-geometry.setIndex(indices);
-
-// Important: split into groups
-geometry.clearGroups();
-const totalFrontFaces = pointsPerPlane * 2; // 2 triangles per quad for front
-geometry.addGroup(0, totalFrontFaces * 3, 0); // 0 = frontMaterial
-geometry.addGroup(totalFrontFaces * 3, totalFrontFaces * 3, 1); // 1 = backMaterial
-
-// Create mesh
-const mesh = new THREE.Mesh(geometry, [frontMaterial, backMaterial]);
-scene.add(mesh);
-
-camera.position.set(3, 3, 10);
+// Camera initial position
+camera.position.set(0, 0, 50);
 camera.lookAt(0, 0, 0);
 
+// Render loop
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
