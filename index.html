@@ -31,10 +31,10 @@ controls.enablePan = true;
 controls.zoomSpeed = 1.2;
 
 // Light
-const light = new THREE.DirectionalLight(0xffffff, 1);
+const light = new THREE.DirectionalLight(0xffffff);
 light.position.set(5, 10, 7.5);
 scene.add(light);
-scene.add(new THREE.AmbientLight(0x404040));
+scene.add(new THREE.AmbientLight(0xffffff));
 
 // Textures
 const textureLoader = new THREE.TextureLoader();
