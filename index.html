@@ -1,16 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Show Cell Boundaries 3D</title>
-  <style>body { margin: 0; }</style>
-
+  <style>body { margin: 0; overflow: hidden; }</style>
   <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-      }
-    }
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
   </script>
 </head>
 <body>
@@ -20,7 +15,7 @@ import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/exampl
 
 // Scene setup
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -32,96 +27,86 @@ controls.enablePan = true;
 controls.zoomSpeed = 1.2;
 
 // Lights
-const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-directionalLight.position.set(5, 10, 7.5);
-scene.add(directionalLight);
+scene.add(new THREE.DirectionalLight(0xffffff, 1).position.set(5,10,7.5));
 scene.add(new THREE.AmbientLight(0x404040));
 
-// Color palette for labels
-const colorPalette = [
-  0xff5555, 0x55ff55, 0x5555ff,
-  0xffff55, 0xff55ff, 0x55ffff,
-  0xffffff
-];
+// Dimensions
+const IMAGE_WIDTH = 5130;
+const IMAGE_HEIGHT = 2000;
+const colorPalette = [0xff5555,0x55ff55,0x5555ff,0xffff55,0xff55ff,0x55ffff,0xffffff];
 
 /**
- * Build a 3D mesh from a map of planeNumber -> [ [x,y], ... ]
- * @param {Object<string, Array<[number, number]>>} planes
- * @param {number} color
- * @returns {THREE.Mesh}
+ * Build a ring mesh for each plane boundary.
+ * No cross-plane faces—just closed loops per slice.
  */
 function createMeshFromPlanes(planes, color) {
-  const pointsPerPlane = Object.values(planes)[0].length;
-  const planeNumbers = Object.keys(planes)
-    .map(key => parseInt(key, 10))
-    .sort((a, b) => a - b);
+  const planeNums = Object.keys(planes).map(n=>+n).sort((a,b)=>a-b);
+  const xOff = IMAGE_WIDTH/2;
+  const yOff = IMAGE_HEIGHT/2;
+  const minZ = Math.min(...planeNums);
+  const maxZ = Math.max(...planeNums);
+  const midZ = (minZ + maxZ)/2;
 
-  const vertices = [];
-  const indices = [];
+  const group = new THREE.Group();
+  const mat = new THREE.LineBasicMaterial({ color });
 
-  // Build vertices
-  planeNumbers.forEach(planeNo => {
-    const coords = planes[planeNo];
-    coords.forEach(([x, y]) => {
-      vertices.push(x, y, planeNo);
+  planeNums.forEach(p => {
+    const coords = planes[p];
+    const pts = new Float32Array(coords.length * 3);
+    coords.forEach(([x,y], i) => {
+      pts[i*3]   = x - xOff;
+      pts[i*3+1] = yOff - y;
+      pts[i*3+2] = p - midZ;
     });
+    // geometry for loop
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+    // close the loop by repeating first point
+    geom.setDrawRange(0, coords.length + 1);
+    const lineLoop = new THREE.LineLoop(geom, mat);
+    group.add(lineLoop);
   });
 
-  // Build indices to connect quads across layers
-  for (let i = 0; i < planeNumbers.length - 1; i++) {
-    for (let j = 0; j < pointsPerPlane; j++) {
-      const next = (j + 1) % pointsPerPlane;
-      const lower     = i      * pointsPerPlane + j;
-      const lowerNext = i      * pointsPerPlane + next;
-      const upper     = (i + 1) * pointsPerPlane + j;
-      const upperNext = (i + 1) * pointsPerPlane + next;
-
-      indices.push(lower, lowerNext, upper);
-      indices.push(lowerNext, upperNext, upper);
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    'position',
-    new THREE.Float32BufferAttribute(vertices, 3)
-  );
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-
-  const material = new THREE.MeshStandardMaterial({
-    color,
-    metalness: 0.1,
-    roughness: 0.8,
-    side: THREE.DoubleSide
-  });
-
-  return new THREE.Mesh(geometry, material);
+  return group;
 }
 
-// Load and visualize JSON data
+// Load JSON and render
 fetch('cell_boundaries.json')
-  .then(response => response.json())
-  .then(({ cell_boundaries: allBoundaries }) => {
-    Object.entries(allBoundaries).forEach(([label, planes], index) => {
-      const color = colorPalette[index % colorPalette.length];
-      const mesh = createMeshFromPlanes(planes, color);
-      scene.add(mesh);
+  .then(r => r.json())
+  .then(({ cell_boundaries }) => {
+    const master = new THREE.Group();
+    Object.entries(cell_boundaries).forEach(([label, planes], i) => {
+      const color = colorPalette[i % colorPalette.length];
+      const cellMesh = createMeshFromPlanes(planes, color);
+      master.add(cellMesh);
     });
+    scene.add(master);
+
+    // center camera on data
+    const box = new THREE.Box3().setFromObject(master);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+
+    camera.position.copy(center.clone().add(new THREE.Vector3(0,0,maxDim*1.2)));
+    controls.target.copy(center);
+    controls.update();
   })
-  .catch(err => console.error('Failed to load JSON', err));
+  .catch(e => console.error('Load error', e));
 
-// Camera initial position
-camera.position.set(0, 0, 50);
-camera.lookAt(0, 0, 0);
+// Responsive
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
 
-// Render loop
-function animate() {
+// Animate
+(function animate() {
   requestAnimationFrame(animate);
   controls.update();
   renderer.render(scene, camera);
-}
-animate();
+})();
 </script>
 </body>
 </html>
