@@ -27,7 +27,9 @@ controls.enablePan = true;
 controls.zoomSpeed = 1.2;
 
 // Lights
-scene.add(new THREE.DirectionalLight(0xffffff, 1).position.set(5,10,7.5));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+dirLight.position.set(5, 10, 7.5);
+scene.add(dirLight);
 scene.add(new THREE.AmbientLight(0x404040));
 
 // Dimensions
@@ -40,55 +42,91 @@ const colorPalette = [0xff5555,0x55ff55,0x5555ff,0xffff55,0xff55ff,0x55ffff,0xff
  * No cross-plane faces—just closed loops per slice.
  */
 function createMeshFromPlanes(planes, color) {
-  const planeNums = Object.keys(planes).map(n=>+n).sort((a,b)=>a-b);
-  const xOff = IMAGE_WIDTH/2;
-  const yOff = IMAGE_HEIGHT/2;
-  const minZ = Math.min(...planeNums);
-  const maxZ = Math.max(...planeNums);
-  const midZ = (minZ + maxZ)/2;
+  const planeNums = Object.keys(planes).map(n => +n).sort((a, b) => a - b);
+  const xOff = IMAGE_WIDTH / 2;
+  const yOff = IMAGE_HEIGHT / 2;
+  const minZ = planeNums[0];
+  const maxZ = planeNums[planeNums.length - 1];
+  const midZ = (minZ + maxZ) / 2;
 
-  const group = new THREE.Group();
-  const mat = new THREE.LineBasicMaterial({ color });
-
-  planeNums.forEach(p => {
-    const coords = planes[p];
-    const pts = new Float32Array(coords.length * 3);
-    coords.forEach(([x,y], i) => {
-      pts[i*3]   = x - xOff;
-      pts[i*3+1] = yOff - y;
-      pts[i*3+2] = p - midZ;
-    });
-    // geometry for loop
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-    // close the loop by repeating first point
-    geom.setDrawRange(0, coords.length + 1);
-    const lineLoop = new THREE.LineLoop(geom, mat);
-    group.add(lineLoop);
+  // Angularly sort each plane's boundary points
+  const perPlaneCoords = planeNums.map(p => {
+    const raw = planes[p].map(([x, y]) => [x - xOff, yOff - y]);
+    const centroid = raw.reduce((c, [x, y]) => [c[0] + x, c[1] + y], [0, 0])
+                     .map(sum => sum / raw.length);
+    return raw
+      .map(([x, y]) => ({ x, y, angle: Math.atan2(y - centroid[1], x - centroid[0]) }))
+      .sort((a, b) => a.angle - b.angle)
+      .map(({ x, y }) => [x, y]);
   });
 
-  return group;
+  // Compute vertex offsets for each plane
+  const offsets = [0];
+  perPlaneCoords.forEach((pts, i) => {
+    if (i > 0) offsets.push(offsets[i - 1] + perPlaneCoords[i - 1].length);
+  });
+
+  // Build vertex buffer
+  const vertices = [];
+  perPlaneCoords.forEach((pts, i) => {
+    const z = planeNums[i] - midZ;
+    pts.forEach(([x, y]) => {
+      vertices.push(x, y, z);
+    });
+  });
+
+  // Build indices only between adjacent planes, matching min counts
+  const indices = [];
+  for (let i = 0; i < perPlaneCoords.length - 1; i++) {
+    const ptsA = perPlaneCoords[i];
+    const ptsB = perPlaneCoords[i + 1];
+    const len = Math.min(ptsA.length, ptsB.length);
+    const offA = offsets[i];
+    const offB = offsets[i + 1];
+    for (let j = 0; j < len; j++) {
+      const next = (j + 1) % len;
+      const a = offA + j;
+      const b = offA + next;
+      const c = offB + j;
+      const d = offB + next;
+      indices.push(a, b, c);
+      indices.push(b, d, c);
+    }
+  }
+
+  // Create geometry
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  // Material
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    metalness: 0.1,
+    roughness: 0.8,
+    side: THREE.DoubleSide
+  });
+  return new THREE.Mesh(geometry, material);
 }
 
 // Load JSON and render
 fetch('cell_boundaries.json')
   .then(r => r.json())
   .then(({ cell_boundaries }) => {
-    const master = new THREE.Group();
+    const group = new THREE.Group();
     Object.entries(cell_boundaries).forEach(([label, planes], i) => {
-      const color = colorPalette[i % colorPalette.length];
-      const cellMesh = createMeshFromPlanes(planes, color);
-      master.add(cellMesh);
+      const mesh = createMeshFromPlanes(planes, colorPalette[i % colorPalette.length]);
+      group.add(mesh);
     });
-    scene.add(master);
+    scene.add(group);
 
     // center camera on data
-    const box = new THREE.Box3().setFromObject(master);
+    const box = new THREE.Box3().setFromObject(group);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-
-    camera.position.copy(center.clone().add(new THREE.Vector3(0,0,maxDim*1.2)));
+    camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, maxDim * 1.2)));
     controls.target.copy(center);
     controls.update();
   })
