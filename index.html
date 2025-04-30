@@ -37,7 +37,7 @@ controls.zoomSpeed    = 1.2;
 const dirLight = new THREE.DirectionalLight(0xffffff, 1);
 dirLight.position.set(5, 10, 7.5);
 scene.add(dirLight);
-scene.add(new THREE.AmbientLight(0x404040));
+scene.add(new THREE.AmbientLight(0xffffff));
 
 // Image dimensions and palette
 const IMAGE_WIDTH  = 5130;
@@ -97,7 +97,12 @@ function createMeshFromPlanes(planes, color) {
   geometry.computeVertexNormals();
 
   const material = new THREE.MeshStandardMaterial({
-    color, metalness: 0.1, roughness: 0.8, side: THREE.DoubleSide
+    color,
+    metalness: 0.1,
+    roughness: 0.8,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.1
   });
   return new THREE.Mesh(geometry, material);
 }
