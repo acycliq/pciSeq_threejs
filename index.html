@@ -2,9 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Show Cell Contours 3D</title>
+  <title>Show Cell Contours 3D (Hover)</title>
   <style>
-    body { margin: 0; overflow: hidden; }
+    body { margin: 0; overflow: hidden; position: relative; }
+    #hover-label {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 5px;
+      border-radius: 5px;
+      font-family: sans-serif;
+      z-index: 10;
+    }
   </style>
   <script type="importmap">
   {
@@ -15,7 +26,8 @@
   </script>
 </head>
 <body>
-<script type="module">
+  <div id="hover-label"></div>
+  <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
 import JSZip from 'https://cdn.skypack.dev/jszip';
@@ -43,6 +55,12 @@ scene.add(new THREE.AmbientLight(0xffffff));
 const IMAGE_WIDTH  = 5130;
 const IMAGE_HEIGHT = 2000;
 const colorPalette = [0xff5555, 0x55ff55, 0x5555ff, 0xffff55, 0xff55ff, 0x55ffff, 0xffffff];
+
+// Hover label element
+const hoverLabelElement = document.getElementById('hover-label');
+
+// Keep track of cell labels and their corresponding objects
+const cellObjects = {};
 
 // Build line segments from 2D boundaries per plane
 function createLineSegmentsFromPlanes(planes, color) {
@@ -77,6 +95,38 @@ function createLineSegmentsFromPlanes(planes, color) {
   return new THREE.LineSegments(geometry, material);
 }
 
+// Raycaster and mouse vector
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+function onMouseMove(event) {
+  // Calculate normalized mouse coordinates
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  // Update the raycaster
+  raycaster.setFromCamera(mouse, camera);
+
+  // Check for intersections with the cell contour objects
+  const intersects = raycaster.intersectObjects(Object.values(cellObjects));
+
+  if (intersects.length > 0) {
+    const intersectedObject = intersects[0].object;
+    // Find the label associated with the intersected object
+    const hoveredLabel = Object.keys(cellObjects).find(key => cellObjects[key] === intersectedObject);
+    if (hoveredLabel) {
+      hoverLabelElement.textContent = `Cell: ${hoveredLabel}`;
+    } else {
+      hoverLabelElement.textContent = '';
+    }
+  } else {
+    hoverLabelElement.textContent = '';
+  }
+}
+
+// Add event listener for mouse move
+window.addEventListener('mousemove', onMouseMove);
+
 // Fetch ZIP, unzip, parse JSON
 fetch('cell_boundaries.zip')
   .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
@@ -100,6 +150,7 @@ fetch('cell_boundaries.zip')
         const color = colorPalette[i % colorPalette.length];
         const lineSegments = createLineSegmentsFromPlanes(planes, color);
         group.add(lineSegments);
+        cellObjects[label] = lineSegments; // Store the object with its label
       });
     scene.add(group);
 
