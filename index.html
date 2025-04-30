@@ -118,11 +118,19 @@ fetch('cell_boundaries.zip')
   })
   .then(text => JSON.parse(text))
   .then(({ cell_boundaries }) => {
+    // only these labels
+    const keep = new Set(['12762', '7588', '10681',
+      '7589', '3043', '6271', '12348',
+      '11915', '6261', '11914', '6261']);
+
     const group = new THREE.Group();
-    Object.entries(cell_boundaries).forEach(([label, planes], i) => {
-      const mesh = createMeshFromPlanes(planes, colorPalette[i % colorPalette.length]);
-      group.add(mesh);
-    });
+    Object.entries(cell_boundaries)
+      .filter(([label]) => keep.has(label))
+      .forEach(([label, planes], i) => {
+        const color = colorPalette[i % colorPalette.length];
+        const mesh  = createMeshFromPlanes(planes, color);
+        group.add(mesh);
+      });
     scene.add(group);
 
     // Center camera
