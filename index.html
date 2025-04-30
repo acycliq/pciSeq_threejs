@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Show Cell Boundaries 3D</title>
+  <title>Show Cell Contours 3D</title>
   <style>
     body { margin: 0; overflow: hidden; }
   </style>
@@ -44,67 +44,37 @@ const IMAGE_WIDTH  = 5130;
 const IMAGE_HEIGHT = 2000;
 const colorPalette = [0xff5555, 0x55ff55, 0x5555ff, 0xffff55, 0xff55ff, 0x55ffff, 0xffffff];
 
-// Build ring mesh from 2D boundaries per plane
-function createMeshFromPlanes(planes, color) {
+// Build line segments from 2D boundaries per plane
+function createLineSegmentsFromPlanes(planes, color) {
   const planeNums = Object.keys(planes).map(n => +n).sort((a, b) => a - b);
   const xOff = IMAGE_WIDTH / 2, yOff = IMAGE_HEIGHT / 2;
-  const minZ = planeNums[0], maxZ = planeNums[planeNums.length-1];
+  const minZ = planeNums[0], maxZ = planeNums[planeNums.length - 1];
   const midZ = (minZ + maxZ) / 2;
 
-  // Sort points by angle around centroid
-  const perPlaneCoords = planeNums.map(p => {
+  const vertices = [];
+  planeNums.forEach(p => {
     const raw = planes[p].map(([x, y]) => [x - xOff, yOff - y]);
-    const centroid = raw.reduce((c, [x, y]) => [c[0]+x, c[1]+y], [0, 0])
+    const centroid = raw.reduce((c, [x, y]) => [c[0] + x, c[1] + y], [0, 0])
                       .map(sum => sum / raw.length);
-    return raw
-      .map(([x, y]) => ({ x, y, angle: Math.atan2(y-centroid[1], x-centroid[0]) }))
+    const sortedPoints = raw
+      .map(([x, y]) => ({ x, y, angle: Math.atan2(y - centroid[1], x - centroid[0]) }))
       .sort((a, b) => a.angle - b.angle)
       .map(pt => [pt.x, pt.y]);
-  });
 
-  // Offsets per plane for indexing
-  const offsets = [0];
-  perPlaneCoords.forEach((pts, i) => {
-    if (i > 0) offsets.push(offsets[i-1] + perPlaneCoords[i-1].length);
-  });
-
-  // Build vertex array
-  const vertices = [];
-  perPlaneCoords.forEach((pts, i) => {
-    const z = planeNums[i] - midZ;
-    pts.forEach(([x, y]) => vertices.push(x, y, z));
-  });
-
-  // Build triangle indices between adjacent planes
-  const indices = [];
-  for (let i = 0; i < perPlaneCoords.length - 1; i++) {
-    const ptsA = perPlaneCoords[i];
-    const ptsB = perPlaneCoords[i+1];
-    const len  = Math.min(ptsA.length, ptsB.length);
-    const offA = offsets[i], offB = offsets[i+1];
-    for (let j = 0; j < len; j++) {
-      const next = (j + 1) % len;
-      const a = offA + j, b = offA + next;
-      const c = offB + j, d = offB + next;
-      indices.push(a, b, c, b, d, c);
+    const z = p - midZ;
+    for (let i = 0; i < sortedPoints.length; i++) {
+      const current = sortedPoints[i];
+      const next = sortedPoints[(i + 1) % sortedPoints.length];
+      vertices.push(current[0], current[1], z);
+      vertices.push(next[0], next[1], z);
     }
-  }
+  });
 
-  // Create geometry & mesh
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
 
-  const material = new THREE.MeshStandardMaterial({
-    color,
-    metalness: 0.1,
-    roughness: 0.8,
-    side: THREE.DoubleSide,
-    transparent: true,
-    opacity: 0.1
-  });
-  return new THREE.Mesh(geometry, material);
+  const material = new THREE.LineBasicMaterial({ color });
+  return new THREE.LineSegments(geometry, material);
 }
 
 // Fetch ZIP, unzip, parse JSON
@@ -125,18 +95,18 @@ fetch('cell_boundaries.zip')
 
     const group = new THREE.Group();
     Object.entries(cell_boundaries)
-      .filter(([label]) => keep.has(label))
+      // .filter(([label]) => keep.has(label))
       .forEach(([label, planes], i) => {
         const color = colorPalette[i % colorPalette.length];
-        const mesh  = createMeshFromPlanes(planes, color);
-        group.add(mesh);
+        const lineSegments = createLineSegmentsFromPlanes(planes, color);
+        group.add(lineSegments);
       });
     scene.add(group);
 
     // Center camera
-    const box    = new THREE.Box3().setFromObject(group);
+    const box = new THREE.Box3().setFromObject(group);
     const center = box.getCenter(new THREE.Vector3());
-    const size   = box.getSize(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
 
     camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, maxDim * 1.2)));
