@@ -3,19 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <title>Show Cell Boundaries 3D</title>
-  <style>body { margin: 0; overflow: hidden; }</style>
+  <style>
+    body { margin: 0; overflow: hidden; }
+  </style>
   <script type="importmap">
-    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
   </script>
 </head>
 <body>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+import JSZip from 'https://cdn.skypack.dev/jszip';
 
 // Scene setup
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
+const scene    = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -23,8 +30,8 @@ document.body.appendChild(renderer.domElement);
 // Controls
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableRotate = true;
-controls.enablePan = true;
-controls.zoomSpeed = 1.2;
+controls.enablePan    = true;
+controls.zoomSpeed    = 1.2;
 
 // Lights
 const dirLight = new THREE.DirectionalLight(0xffffff, 1);
@@ -32,87 +39,79 @@ dirLight.position.set(5, 10, 7.5);
 scene.add(dirLight);
 scene.add(new THREE.AmbientLight(0x404040));
 
-// Dimensions
-const IMAGE_WIDTH = 5130;
+// Image dimensions and palette
+const IMAGE_WIDTH  = 5130;
 const IMAGE_HEIGHT = 2000;
-const colorPalette = [0xff5555,0x55ff55,0x5555ff,0xffff55,0xff55ff,0x55ffff,0xffffff];
+const colorPalette = [0xff5555, 0x55ff55, 0x5555ff, 0xffff55, 0xff55ff, 0x55ffff, 0xffffff];
 
-/**
- * Build a ring mesh for each plane boundary.
- * No cross-plane faces—just closed loops per slice.
- */
+// Build ring mesh from 2D boundaries per plane
 function createMeshFromPlanes(planes, color) {
   const planeNums = Object.keys(planes).map(n => +n).sort((a, b) => a - b);
-  const xOff = IMAGE_WIDTH / 2;
-  const yOff = IMAGE_HEIGHT / 2;
-  const minZ = planeNums[0];
-  const maxZ = planeNums[planeNums.length - 1];
+  const xOff = IMAGE_WIDTH / 2, yOff = IMAGE_HEIGHT / 2;
+  const minZ = planeNums[0], maxZ = planeNums[planeNums.length-1];
   const midZ = (minZ + maxZ) / 2;
 
-  // Angularly sort each plane's boundary points
+  // Sort points by angle around centroid
   const perPlaneCoords = planeNums.map(p => {
     const raw = planes[p].map(([x, y]) => [x - xOff, yOff - y]);
-    const centroid = raw.reduce((c, [x, y]) => [c[0] + x, c[1] + y], [0, 0])
-                     .map(sum => sum / raw.length);
+    const centroid = raw.reduce((c, [x, y]) => [c[0]+x, c[1]+y], [0, 0])
+                      .map(sum => sum / raw.length);
     return raw
-      .map(([x, y]) => ({ x, y, angle: Math.atan2(y - centroid[1], x - centroid[0]) }))
+      .map(([x, y]) => ({ x, y, angle: Math.atan2(y-centroid[1], x-centroid[0]) }))
       .sort((a, b) => a.angle - b.angle)
-      .map(({ x, y }) => [x, y]);
+      .map(pt => [pt.x, pt.y]);
   });
 
-  // Compute vertex offsets for each plane
+  // Offsets per plane for indexing
   const offsets = [0];
   perPlaneCoords.forEach((pts, i) => {
-    if (i > 0) offsets.push(offsets[i - 1] + perPlaneCoords[i - 1].length);
+    if (i > 0) offsets.push(offsets[i-1] + perPlaneCoords[i-1].length);
   });
 
-  // Build vertex buffer
+  // Build vertex array
   const vertices = [];
   perPlaneCoords.forEach((pts, i) => {
     const z = planeNums[i] - midZ;
-    pts.forEach(([x, y]) => {
-      vertices.push(x, y, z);
-    });
+    pts.forEach(([x, y]) => vertices.push(x, y, z));
   });
 
-  // Build indices only between adjacent planes, matching min counts
+  // Build triangle indices between adjacent planes
   const indices = [];
   for (let i = 0; i < perPlaneCoords.length - 1; i++) {
     const ptsA = perPlaneCoords[i];
-    const ptsB = perPlaneCoords[i + 1];
-    const len = Math.min(ptsA.length, ptsB.length);
-    const offA = offsets[i];
-    const offB = offsets[i + 1];
+    const ptsB = perPlaneCoords[i+1];
+    const len  = Math.min(ptsA.length, ptsB.length);
+    const offA = offsets[i], offB = offsets[i+1];
     for (let j = 0; j < len; j++) {
       const next = (j + 1) % len;
-      const a = offA + j;
-      const b = offA + next;
-      const c = offB + j;
-      const d = offB + next;
-      indices.push(a, b, c);
-      indices.push(b, d, c);
+      const a = offA + j, b = offA + next;
+      const c = offB + j, d = offB + next;
+      indices.push(a, b, c, b, d, c);
     }
   }
 
-  // Create geometry
+  // Create geometry & mesh
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
 
-  // Material
   const material = new THREE.MeshStandardMaterial({
-    color,
-    metalness: 0.1,
-    roughness: 0.8,
-    side: THREE.DoubleSide
+    color, metalness: 0.1, roughness: 0.8, side: THREE.DoubleSide
   });
   return new THREE.Mesh(geometry, material);
 }
 
-// Load JSON and render
-fetch('cell_boundaries.json')
-  .then(r => r.json())
+// Fetch ZIP, unzip, parse JSON
+fetch('cell_boundaries.zip')
+  .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
+  .then(buf => JSZip.loadAsync(buf))
+  .then(zip => {
+    const entry = zip.file('cell_boundaries.json');
+    if (!entry) throw new Error('Missing JSON in ZIP');
+    return entry.async('string');
+  })
+  .then(text => JSON.parse(text))
   .then(({ cell_boundaries }) => {
     const group = new THREE.Group();
     Object.entries(cell_boundaries).forEach(([label, planes], i) => {
@@ -121,30 +120,32 @@ fetch('cell_boundaries.json')
     });
     scene.add(group);
 
-    // center camera on data
-    const box = new THREE.Box3().setFromObject(group);
+    // Center camera
+    const box    = new THREE.Box3().setFromObject(group);
     const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
+
     camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, maxDim * 1.2)));
     controls.target.copy(center);
     controls.update();
   })
-  .catch(e => console.error('Load error', e));
+  .catch(e => console.error('Load/unzip error', e));
 
-// Responsive
+// Handle resize
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// Animate
-(function animate() {
+// Animation loop
+function animate() {
   requestAnimationFrame(animate);
   controls.update();
   renderer.render(scene, camera);
-})();
+}
+animate();
 </script>
 </body>
 </html>
