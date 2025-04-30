@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Show Cell Contours 3D (Hover)</title>
+  <title>Show Cell Contours 3D (Hover Pixel Coords Refined)</title>
   <style>
     body { margin: 0; overflow: hidden; position: relative; }
-    #hover-label {
+    #hover-info {
       position: absolute;
       top: 10px;
       left: 10px;
@@ -26,7 +26,7 @@
   </script>
 </head>
 <body>
-  <div id="hover-label"></div>
+  <div id="hover-info"></div>
   <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
@@ -51,33 +51,47 @@ dirLight.position.set(5, 10, 7.5);
 scene.add(dirLight);
 scene.add(new THREE.AmbientLight(0xffffff));
 
-// Image dimensions and palette
-const IMAGE_WIDTH  = 5130;
-const IMAGE_HEIGHT = 2000;
+// Image dimensions
+const IMAGE_WIDTH  = 6431;
+const IMAGE_HEIGHT = 8544;
+const IMAGE_WIDTH_HALF  = IMAGE_WIDTH / 2;
+const IMAGE_HEIGHT_HALF = IMAGE_HEIGHT / 2;
+
+// Palette
 const colorPalette = [0xff5555, 0x55ff55, 0x5555ff, 0xffff55, 0xff55ff, 0x55ffff, 0xffffff];
 
-// Hover label element
-const hoverLabelElement = document.getElementById('hover-label');
+// Hover info element
+const hoverInfoElement = document.getElementById('hover-info');
 
-// Keep track of cell labels and their corresponding objects
+// Keep track of cell labels and their corresponding objects and plane data
 const cellObjects = {};
+const cellPlaneData = {};
+
+// Function to calculate squared distance between 2D points
+function distanceSq(p1, p2) {
+  return Math.pow(p1[0] - p2[0], 2) + Math.pow(p1[1] - p2[1], 2);
+}
 
 // Build line segments from 2D boundaries per plane
 function createLineSegmentsFromPlanes(planes, color) {
   const planeNums = Object.keys(planes).map(n => +n).sort((a, b) => a - b);
-  const xOff = IMAGE_WIDTH / 2, yOff = IMAGE_HEIGHT / 2;
+  const xOff = IMAGE_WIDTH_HALF;
+  const yOff = IMAGE_HEIGHT_HALF;
   const minZ = planeNums[0], maxZ = planeNums[planeNums.length - 1];
   const midZ = (minZ + maxZ) / 2;
 
   const vertices = [];
+  const planePoints = {}; // Store original 2D points per plane
+
   planeNums.forEach(p => {
-    const raw = planes[p].map(([x, y]) => [x - xOff, yOff - y]);
+    const raw = planes[p].map(([x, y]) => [x, y]); // Keep original coords
+    planePoints[p] = raw;
     const centroid = raw.reduce((c, [x, y]) => [c[0] + x, c[1] + y], [0, 0])
                       .map(sum => sum / raw.length);
     const sortedPoints = raw
       .map(([x, y]) => ({ x, y, angle: Math.atan2(y - centroid[1], x - centroid[0]) }))
       .sort((a, b) => a.angle - b.angle)
-      .map(pt => [pt.x, pt.y]);
+      .map(pt => [pt.x - xOff, yOff - pt.y]); // Center for 3D
 
     const z = p - midZ;
     for (let i = 0; i < sortedPoints.length; i++) {
@@ -92,7 +106,9 @@ function createLineSegmentsFromPlanes(planes, color) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
 
   const material = new THREE.LineBasicMaterial({ color });
-  return new THREE.LineSegments(geometry, material);
+  const lineSegments = new THREE.LineSegments(geometry, material);
+  lineSegments.userData = { planePoints }; // Attach original 2D points
+  return lineSegments;
 }
 
 // Raycaster and mouse vector
@@ -100,7 +116,7 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
 function onMouseMove(event) {
-  // Calculate normalized mouse coordinates
+  // Calculate normalized mouse coordinates (center is origin)
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -111,16 +127,61 @@ function onMouseMove(event) {
   const intersects = raycaster.intersectObjects(Object.values(cellObjects));
 
   if (intersects.length > 0) {
-    const intersectedObject = intersects[0].object;
-    // Find the label associated with the intersected object
+    const firstIntersection = intersects[0];
+    const intersectedObject = firstIntersection.object;
+    const intersectionPoint3D = firstIntersection.point;
+
     const hoveredLabel = Object.keys(cellObjects).find(key => cellObjects[key] === intersectedObject);
-    if (hoveredLabel) {
-      hoverLabelElement.textContent = `Cell: ${hoveredLabel}`;
+
+    if (hoveredLabel && intersectedObject.userData && intersectedObject.userData.planePoints) {
+      const planePoints = intersectedObject.userData.planePoints;
+      let closestPlane = null;
+      let minZDistance = Infinity;
+
+      // Find the Z-plane of the intersection
+      const intersectionZ = intersectionPoint3D.z;
+
+      // Find the closest plane number in the original data based on Z
+      for (const planeNumStr in planePoints) {
+        const planeNum = parseInt(planeNumStr);
+        const zValue = planeNum - ((Object.keys(cellPlaneData[hoveredLabel]).map(n => +n).sort((a, b) => a - b)[0] + Object.keys(cellPlaneData[hoveredLabel]).map(n => +n).sort((a, b) => a - b).pop()) / 2);
+        const distance = Math.abs(intersectionZ - zValue);
+        if (distance < minZDistance) {
+          minZDistance = distance;
+          closestPlane = planeNumStr;
+        }
+      }
+
+      if (closestPlane && planePoints[closestPlane].length > 0) {
+        const points2D = planePoints[closestPlane];
+        let closestDistSq = Infinity;
+        let closest2DPoint = null;
+
+        // Project the 3D intersection point onto the closest plane (approximation)
+        const projectedPoint2D = new THREE.Vector2(intersectionPoint3D.x + IMAGE_WIDTH_HALF, IMAGE_HEIGHT_HALF - intersectionPoint3D.y);
+
+        // Find the 2D point on the closest plane that is closest to the projected 2D point
+        for (const point of points2D) {
+          const distSq = distanceSq([projectedPoint2D.x, projectedPoint2D.y], point);
+          if (distSq < closestDistSq) {
+            closestDistSq = distSq;
+            closest2DPoint = point;
+          }
+        }
+
+        if (closest2DPoint) {
+          hoverInfoElement.textContent = `Cell: ${hoveredLabel} (Pixel x: ${Math.round(closest2DPoint[0])}, y: ${Math.round(closest2DPoint[1])})`;
+        } else {
+          hoverInfoElement.textContent = `Cell: ${hoveredLabel}`;
+        }
+      } else {
+        hoverInfoElement.textContent = `Cell: ${hoveredLabel}`;
+      }
     } else {
-      hoverLabelElement.textContent = '';
+      hoverInfoElement.textContent = '';
     }
   } else {
-    hoverLabelElement.textContent = '';
+    hoverInfoElement.textContent = '';
   }
 }
 
@@ -139,14 +200,13 @@ fetch('cell_boundaries.zip')
   .then(text => JSON.parse(text))
   .then(({ cell_boundaries }) => {
     // only these labels
-    const keep = new Set(['12762', '7588', '10681',
-      '7589', '3043', '6271', '12348',
-      '11915', '6261', '11914', '6261']);
+    const keep = new Set(['12762', '7588', '10681', '7589', '3043', '6271', '12348', '11915', '6261', '11914', '6261', '14026']); // Added 14026
 
     const group = new THREE.Group();
     Object.entries(cell_boundaries)
-      // .filter(([label]) => keep.has(label))
+      .filter(([label]) => keep.has(label))
       .forEach(([label, planes], i) => {
+        cellPlaneData[label] = planes; // Store the plane data
         const color = colorPalette[i % colorPalette.length];
         const lineSegments = createLineSegmentsFromPlanes(planes, color);
         group.add(lineSegments);
