@@ -200,7 +200,10 @@ fetch('cell_boundaries.zip')
   .then(text => JSON.parse(text))
   .then(({ cell_boundaries }) => {
     // only these labels
-    const keep = new Set(['12762', '7588', '10681', '7589', '3043', '6271', '12348', '11915', '6261', '11914', '6261', '14026']); // Added 14026
+    const keep = new Set(['12762', '7588', '10681',
+      '7589', '3043', '6271', '12348', '11915',
+      '6261', '11914', '6261', '14026', '10275',
+    '9432', '7281', '6991', '11140', '3067', '12372']); // Added 14026
 
     const group = new THREE.Group();
     Object.entries(cell_boundaries)
