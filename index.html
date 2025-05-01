@@ -47,7 +47,7 @@ const planesToLoad = 'all'; // Set to 'all' to load all planes, or an array of p
 
 // Scene setup
 const scene    = new THREE.Scene();
-const camera   = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
+const camera   = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -114,7 +114,78 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
 function onMouseMove(event) {
-  // ... (rest of the onMouseMove function remains the same)
+  // Calculate normalized mouse coordinates (center is origin)
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  // Update the raycaster
+  raycaster.setFromCamera(mouse, camera);
+
+  // Check for intersections with the cell contour objects
+  const intersects = raycaster.intersectObjects(Object.values(cellObjects));
+
+  if (intersects.length > 0) {
+    const firstIntersection = intersects[0];
+    const intersectedObject = firstIntersection.object;
+    const intersectionPoint3D = firstIntersection.point;
+
+    const hoveredLabel = Object.keys(cellObjects).find(key => cellObjects[key] === intersectedObject);
+
+    if (hoveredLabel && intersectedObject.userData && intersectedObject.userData.planePoints) {
+      const planePoints = intersectedObject.userData.planePoints;
+      let closestPlane = null;
+      let minZDistance = Infinity;
+
+      // Find the Z-plane of the intersection
+      const intersectionZ = intersectionPoint3D.z;
+
+      // Find the closest plane number in the original data based on Z
+      const cellPlanes = cellPlaneData[hoveredLabel];
+      if (cellPlanes) {
+        for (const planeNumStr in cellPlanes) {
+          const planeNum = parseInt(planeNumStr);
+          const zValue = planeNum - TOTAL_PLANES_HALF; // Use the same global Z offset
+          const distance = Math.abs(intersectionZ - zValue);
+          if (distance < minZDistance) {
+            minZDistance = distance;
+            closestPlane = planeNumStr;
+          }
+        }
+
+        if (closestPlane && planePoints[closestPlane] && planePoints[closestPlane].length > 0) {
+          const points2D = planePoints[closestPlane];
+          let closestDistSq = Infinity;
+          let closest2DPoint = null;
+
+          // Project the 3D intersection point onto the closest plane (approximation)
+          const projectedPoint2D = new THREE.Vector2(intersectionPoint3D.x + IMAGE_WIDTH_HALF, IMAGE_HEIGHT_HALF - intersectionPoint3D.y);
+
+          // Find the 2D point on the closest plane that is closest to the projected 2D point
+          for (const point of points2D) {
+            const distSq = distanceSq([projectedPoint2D.x, projectedPoint2D.y], point);
+            if (distSq < closestDistSq) {
+              closestDistSq = distSq;
+              closest2DPoint = point;
+            }
+          }
+
+          if (closest2DPoint) {
+            hoverInfoElement.textContent = `Cell: ${hoveredLabel} (Pixel x: ${Math.round(closest2DPoint[0])}, y: ${Math.round(closest2DPoint[1])})`;
+          } else {
+            hoverInfoElement.textContent = `Cell: ${hoveredLabel}`;
+          }
+        } else {
+          hoverInfoElement.textContent = `Cell: ${hoveredLabel}`;
+        }
+      } else {
+        hoverInfoElement.textContent = '';
+      }
+    } else {
+      hoverInfoElement.textContent = '';
+    }
+  } else {
+    hoverInfoElement.textContent = '';
+  }
 }
 
 // Add event listener for mouse move
@@ -139,7 +210,7 @@ fetch('cell_boundaries.zip')
 
     const group = new THREE.Group();
     Object.entries(cell_boundaries)
-      // .filter(([label]) => keep.has(label))
+      .filter(([label]) => keep.has(label))
       .forEach(([label, planes], i) => {
         let planesToProcess = {};
 
