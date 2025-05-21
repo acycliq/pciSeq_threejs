@@ -55,6 +55,7 @@
       controls.maxDistance = 10000;
 
       raycaster = new THREE.Raycaster();
+      raycaster.params.Points.threshold = 3;
 
       window.addEventListener('resize', onWindowResize);
       window.addEventListener('mousemove', onMouseMove);
