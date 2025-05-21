@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Show Cell Contours 3D (Hover Pixel Coords Refined)</title>
+  <style>
+    body { margin: 0; overflow: hidden; position: relative; }
+    #hover-info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 5px;
+      border-radius: 5px;
+      font-family: sans-serif;
+      z-index: 10;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="hover-info"></div>
+  <script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+import JSZip from 'https://cdn.skypack.dev/jszip';
+
+// --- IMAGE DIMENSIONS AS GLOBAL CONSTANTS ---
+const TOTAL_PLANES = 68;
+const IMAGE_WIDTH  = 6431;
+const IMAGE_HEIGHT = 8544/2;
+const IMAGE_WIDTH_HALF  = IMAGE_WIDTH / 2;
+const IMAGE_HEIGHT_HALF = IMAGE_HEIGHT / 2;
+const TOTAL_PLANES_HALF = TOTAL_PLANES / 2;
+
+const voxelSize = [1, 1, 1];
+
+// --- PLANE SELECTION ---
+const planesToLoad = 'all'; // Set to 'all' to load all planes, or an array of plane numbers (e.g., [34])
+ // const planesToLoad  = [34, 35]
+// -----------------------
+
+// Scene setup
+const scene    = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableRotate = true;
+controls.enablePan    = true;
+controls.zoomSpeed    = 1.2;
+controls.zoomToCursor = true;
+
+// Lights
+const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+dirLight.position.set(5, 10, 7.5);
+scene.add(dirLight);
+scene.add(new THREE.AmbientLight(0xffffff));
+
+// Palette
+const colorPalette = [0xff5555, 0x55ff55, 0x5555ff, 0xffff55, 0xff55ff, 0x55ffff, 0xffffff];
+
+// Hover info element
+const hoverInfoElement = document.getElementById('hover-info');
+
+// Keep track of cell labels and their corresponding objects and plane data
+const cellObjects = {};
+const cellPlaneData = {};
+
+// Function to calculate squared distance between 2D points
+function distanceSq(p1, p2) {
+  return Math.pow(p1[0] - p2[0], 2) + Math.pow(p1[1] - p2[1], 2);
+}
+
+// Build line segments from 2D boundaries per plane (using fixed global offsets)
+// Build line segments from 2D boundaries per plane (using fixed global offsets and normalized voxel size)
+function createLineSegmentsFromPlanes(planes, color, voxelSize) {
+  const planeNums = Object.keys(planes).map(n => +n).sort((a, b) => a - b);
+  // const xScaleFactor = voxelSize[0];
+  // const yScaleFactor = voxelSize[1];
+  const zScaleFactor = voxelSize[2] / voxelSize[0]; // Normalize z by x (or y, since they are the same)
+
+  const vertices = [];
+  const planePoints = {}; // Store original 2D points per plane
+
+  planeNums.forEach(p => {
+    const raw = planes[p].map(([x, y]) => [x, y]); // Keep original coords
+    planePoints[p] = raw;
+    const centeredPoints = raw.map(([x, y]) => [x - IMAGE_WIDTH_HALF, IMAGE_HEIGHT_HALF - y]); // Center X and Y
+
+    const z = (p - TOTAL_PLANES_HALF) * zScaleFactor; // Scale Z by the normalized factor
+    for (let i = 0; i < centeredPoints.length; i++) {
+      const current = centeredPoints[i];
+      const next = centeredPoints[(i + 1) % centeredPoints.length];
+      vertices.push(current[0], current[1], z); // X and Y are effectively scaled by 1 after normalization
+      vertices.push(next[0], next[1], z);     // X and Y are effectively scaled by 1 after normalization
+    }
+  });
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+  const material = new THREE.LineBasicMaterial({ color });
+  const lineSegments = new THREE.LineSegments(geometry, material);
+  lineSegments.userData = { planePoints }; // Attach original 2D points
+  return lineSegments;
+}
+
+// Raycaster and mouse vector
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+function onMouseMove(event) {
+  // Calculate normalized mouse coordinates (center is origin)
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  // Update the raycaster
+  raycaster.setFromCamera(mouse, camera);
+
+  // Check for intersections with the cell contour objects
+  const intersects = raycaster.intersectObjects(Object.values(cellObjects));
+
+  if (intersects.length > 0) {
+    const firstIntersection = intersects[0];
+    const intersectedObject = firstIntersection.object;
+    const intersectionPoint3D = firstIntersection.point;
+
+    const hoveredLabel = Object.keys(cellObjects).find(key => cellObjects[key] === intersectedObject);
+
+    if (hoveredLabel && intersectedObject.userData && intersectedObject.userData.planePoints) {
+      const planePoints = intersectedObject.userData.planePoints;
+      let closestPlane = null;
+      let minZDistance = Infinity;
+
+      // Find the Z-plane of the intersection
+      const intersectionZ = intersectionPoint3D.z;
+
+      // Find the closest plane number in the original data based on Z
+      const cellPlanes = cellPlaneData[hoveredLabel];
+      if (cellPlanes) {
+        for (const planeNumStr in cellPlanes) {
+          const planeNum = parseInt(planeNumStr);
+          const zValue = planeNum - TOTAL_PLANES_HALF; // Use the same global Z offset
+          const distance = Math.abs(intersectionZ - zValue);
+          if (distance < minZDistance) {
+            minZDistance = distance;
+            closestPlane = planeNumStr;
+          }
+        }
+
+        if (closestPlane && planePoints[closestPlane] && planePoints[closestPlane].length > 0) {
+          const points2D = planePoints[closestPlane];
+          let closestDistSq = Infinity;
+          let closest2DPoint = null;
+
+          // Project the 3D intersection point onto the closest plane (approximation)
+          const projectedPoint2D = new THREE.Vector2(intersectionPoint3D.x + IMAGE_WIDTH_HALF, IMAGE_HEIGHT_HALF - intersectionPoint3D.y);
+
+          // Find the 2D point on the closest plane that is closest to the projected 2D point
+          for (const point of points2D) {
+            const distSq = distanceSq([projectedPoint2D.x, projectedPoint2D.y], point);
+            if (distSq < closestDistSq) {
+              closestDistSq = distSq;
+              closest2DPoint = point;
+            }
+          }
+
+          if (closest2DPoint) {
+            hoverInfoElement.textContent = `Cell: ${hoveredLabel} (Pixel x: ${Math.round(closest2DPoint[0])}, y: ${Math.round(closest2DPoint[1])})`;
+          } else {
+            hoverInfoElement.textContent = `Cell: ${hoveredLabel}`;
+          }
+        } else {
+          hoverInfoElement.textContent = `Cell: ${hoveredLabel}`;
+        }
+      } else {
+        hoverInfoElement.textContent = '';
+      }
+    } else {
+      hoverInfoElement.textContent = '';
+    }
+  } else {
+    hoverInfoElement.textContent = '';
+  }
+}
+
+// Add event listener for mouse move
+window.addEventListener('mousemove', onMouseMove);
+
+// Fetch ZIP, unzip, parse JSON
+fetch('cell_boundaries.zip')
+  .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
+  .then(buf => JSZip.loadAsync(buf))
+  .then(zip => {
+    const entry = zip.file('cell_boundaries.json');
+    if (!entry) throw new Error('Missing JSON in ZIP');
+    return entry.async('string');
+  })
+  .then(text => JSON.parse(text))
+  .then(({ cell_boundaries }) => {
+    // const keep = new Set(['12762', '7588', '10681',
+    //   '7589', '3043', '6271', '12348', '11915',
+    //   '6261', '11914', '6261', '14026', '10275', '7968',
+    // '9432', '7281', '6991', '11140', '3067', '12372',
+    //   '12331', '1142']); // Added 14026
+
+    const keep = new Set(['7968']); // Added 14026
+
+    const group = new THREE.Group();
+    Object.entries(cell_boundaries)
+      // .filter(([label]) => keep.has(label))
+      .forEach(([label, planes], i) => {
+        let planesToProcess = {};
+
+        if (planesToLoad === 'all') {
+          planesToProcess = planes;
+        } else if (Array.isArray(planesToLoad)) {
+          planesToLoad.forEach(planeNum => {
+            const planeNumStr = planeNum.toString();
+            if (planes.hasOwnProperty(planeNumStr)) {
+              planesToProcess[planeNum] = planes[planeNumStr];
+            }
+          });
+        } else if (typeof planesToLoad === 'number') {
+          const planeNumStr = planesToLoad.toString();
+          if (planes.hasOwnProperty(planeNumStr)) {
+            planesToProcess[planesToLoad] = planes[planeNumStr];
+          }
+        }
+
+        if (Object.keys(planesToProcess).length > 0) {
+          cellPlaneData[label] = planesToProcess;
+          const color = colorPalette[i % colorPalette.length];
+          const lineSegments = createLineSegmentsFromPlanes(planesToProcess, color, voxelSize); // No need to pass globalMidZ anymore
+          group.add(lineSegments);
+          cellObjects[label] = lineSegments;
+        }
+      });
+    scene.add(group);
+
+    // Center camera based on the overall dimensions
+    const center = new THREE.Vector3(0, 0, 0); // The contours are now centered around the origin
+    const maxDim = Math.max(IMAGE_WIDTH, IMAGE_HEIGHT, TOTAL_PLANES);
+
+    camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, maxDim * 1.2)));
+    controls.target.copy(center);
+    controls.update();
+  })
+  .catch(e => console.error('Load/unzip error', e));
+
+// Handle resize
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Animation loop
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
