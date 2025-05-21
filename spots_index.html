@@ -26,8 +26,8 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
   <!-- OrbitControls from official Three.js examples -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-  <!-- PapaParse for TSV parsing -->
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <!-- D3.js for TSV parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
   <script>
     let camera, scene, renderer, raycaster, controls;
@@ -87,11 +87,7 @@
     }
 
     function processData(text) {
-      const parsedData = Papa.parse(text, {
-        header: true,
-        delimiter: '\t',
-        skipEmptyLines: true
-      }).data;
+      const parsedData = d3.tsvParse(text);
 
       spots = parsedData.map(d => ({
         x: parseFloat(d.x),
