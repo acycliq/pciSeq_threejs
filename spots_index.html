@@ -22,11 +22,8 @@
   <div id="tooltip"></div>
   <input type="file" id="fileInput" accept=".tsv" style="position: absolute; top: 10px; left: 10px; z-index: 100;">
 
-  <!-- Three.js core -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-  <!-- OrbitControls from official Three.js examples -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-  <!-- D3.js for TSV parsing -->
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
   <script>
@@ -35,13 +32,38 @@
     const mouse = new THREE.Vector2();
     const tooltip = document.getElementById('tooltip');
     const fileInput = document.getElementById('fileInput');
+    let hoveredIndex = null;
+
+    const POINT_SIZE = 2.0
+
+    const vertexShader = `
+      attribute float size;
+      attribute vec3 color;
+      varying vec3 vColor;
+      void main() {
+        vColor = color;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = size * (3000.0 / -mvPosition.z);
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `;
+
+    const fragmentShader = `
+      varying vec3 vColor;
+      void main() {
+        if (length(gl_PointCoord - vec2(0.5, 0.5)) > 0.5) discard;
+        gl_FragColor = vec4(vColor, 1.0);
+      }
+    `;
 
     init();
     setupFileInput();
 
     function init() {
       scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 1, 10000);
+      scene.background = new THREE.Color(0x000000);
+      
+      camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 100, 100000);
       camera.position.set(0, 0, 5000);
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -52,10 +74,10 @@
       controls.enableDamping = true;
       controls.dampingFactor = 0.1;
       controls.minDistance = 100;
-      controls.maxDistance = 10000;
+      controls.maxDistance = 100000;
 
       raycaster = new THREE.Raycaster();
-      raycaster.params.Points.threshold = 3;
+      raycaster.params.Points.threshold = 1;
 
       window.addEventListener('resize', onWindowResize);
       window.addEventListener('mousemove', onMouseMove);
@@ -74,7 +96,6 @@
         reader.readAsText(file);
       });
 
-      // Try to load geneData.tsv automatically
       fetch('geneData.tsv')
         .then(response => {
           if (!response.ok) throw new Error('File not found');
@@ -109,8 +130,7 @@
 
       const geometry = new THREE.BufferGeometry();
       const verts = new Float32Array(spots.length * 3);
-
-      // Calculate center of mass to center the cloud
+      
       let centerX = 0, centerY = 0, centerZ = 0;
       spots.forEach(s => {
         centerX += s.x;
@@ -129,20 +149,33 @@
 
       geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
 
-      const material = new THREE.PointsMaterial({
-        size: 20,
-        sizeAttenuation: true,
-        color: 0x00ffcc
+      // Create size attribute
+      const sizes = new Float32Array(spots.length);
+      sizes.fill(POINT_SIZE);
+      geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+      // Create color attribute
+      const colors = new Float32Array(spots.length * 3);
+      for (let i = 0; i < spots.length; i++) {
+        colors[i * 3] = 0;     // R
+        colors[i * 3 + 1] = 1; // G
+        colors[i * 3 + 2] = 0.8; // B
+      }
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      const material = new THREE.ShaderMaterial({
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        transparent: true
       });
 
       pointCloud = new THREE.Points(geometry, material);
       scene.add(pointCloud);
 
-      // Adjust camera position based on data bounds
       const maxDim = Math.max(
-              spots.reduce((max, s) => Math.max(max, Math.abs(s.x - centerX)), 0),
-              spots.reduce((max, s) => Math.max(max, Math.abs(s.y - centerY)), 0),
-              spots.reduce((max, s) => Math.max(max, Math.abs(s.z - centerZ)), 0)
+        spots.reduce((max, s) => Math.max(max, Math.abs(s.x - centerX)), 0),
+        spots.reduce((max, s) => Math.max(max, Math.abs(s.y - centerY)), 0),
+        spots.reduce((max, s) => Math.max(max, Math.abs(s.z - centerZ)), 0)
       );
       camera.position.z = maxDim * 3;
       controls.update();
@@ -169,14 +202,56 @@
       if (!pointCloud) return;
       raycaster.setFromCamera(mouse, camera);
       const hits = raycaster.intersectObject(pointCloud);
+      
       if (hits.length) {
         const idx = hits[0].index;
-        const spot = spots[idx];
-        tooltip.textContent = `${spot.gene} (ID: ${spot.id})`;
-        tooltip.style.display = 'block';
+        if (hoveredIndex !== idx) {
+          if (hoveredIndex !== null) {
+            resetPointAppearance(hoveredIndex);
+          }
+          highlightPoint(idx);
+          hoveredIndex = idx;
+          const spot = spots[idx];
+          tooltip.textContent = `${spot.gene} (ID: ${spot.id})`;
+          tooltip.style.display = 'block';
+        }
       } else {
+        if (hoveredIndex !== null) {
+          resetPointAppearance(hoveredIndex);
+          hoveredIndex = null;
+        }
         tooltip.style.display = 'none';
       }
+    }
+
+    function highlightPoint(index) {
+      const geometry = pointCloud.geometry;
+      const sizes = geometry.attributes.size.array;
+      const colors = geometry.attributes.color.array;
+
+      sizes[index] = POINT_SIZE * 1.2;
+
+      colors[index * 3] = 1;     // R
+      colors[index * 3 + 1] = 1; // G
+      colors[index * 3 + 2] = 0; // B
+
+      geometry.attributes.size.needsUpdate = true;
+      geometry.attributes.color.needsUpdate = true;
+    }
+
+    function resetPointAppearance(index) {
+      const geometry = pointCloud.geometry;
+      const sizes = geometry.attributes.size.array;
+      const colors = geometry.attributes.color.array;
+
+      sizes[index] = POINT_SIZE;
+
+      colors[index * 3] = 0;     // R
+      colors[index * 3 + 1] = 1; // G
+      colors[index * 3 + 2] = 0.8; // B
+
+      geometry.attributes.size.needsUpdate = true;
+      geometry.attributes.color.needsUpdate = true;
     }
   </script>
 </body>
