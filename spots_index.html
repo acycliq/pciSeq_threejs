@@ -20,65 +20,117 @@
 </head>
 <body>
   <div id="tooltip"></div>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
+  <input type="file" id="fileInput" accept=".tsv" style="position: absolute; top: 10px; left: 10px; z-index: 100;">
+
+  <!-- Three.js core -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <!-- OrbitControls from official Three.js examples -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+  <!-- PapaParse for TSV parsing -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
   <script>
-    let camera, scene, renderer, raycaster;
-    let spots, pointCloud;
+    let camera, scene, renderer, raycaster, controls;
+    let spots = [], pointCloud;
     const mouse = new THREE.Vector2();
     const tooltip = document.getElementById('tooltip');
+    const fileInput = document.getElementById('fileInput');
 
     init();
-    loadData();
+    setupFileInput();
 
     function init() {
-      // scene + camera
-      scene    = new THREE.Scene();
-      camera   = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 1, 10000);
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 1, 10000);
       camera.position.set(0, 0, 5000);
 
-      // renderer
       renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setSize(innerWidth, innerHeight);
+      renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
 
-      // raycaster
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.1;
+      controls.minDistance = 100;
+      controls.maxDistance = 10000;
+
       raycaster = new THREE.Raycaster();
 
       window.addEventListener('resize', onWindowResize);
       window.addEventListener('mousemove', onMouseMove);
     }
 
-    function loadData() {
+    function setupFileInput() {
+      fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const content = e.target.result;
+          processData(content);
+        };
+        reader.readAsText(file);
+      });
+
+      // Try to load geneData.tsv automatically
       fetch('geneData.tsv')
-        .then(r => r.text())
-        .then(txt => Papa.parse(txt, { header: true }).data)
-        .then(data => {
-          spots = data.map(d => ({
-            x: parseFloat(d.x),
-            y: parseFloat(d.y),
-            z: parseFloat(d.z),
-            gene: d.gene_name,
-            id: d.spot_id
-          }));
-          makePointCloud();
-          animate();
+        .then(response => {
+          if (!response.ok) throw new Error('File not found');
+          return response.text();
         })
-        .catch(console.error);
+        .then(text => processData(text))
+        .catch(error => {
+          console.log('Could not load geneData.tsv automatically. Please select the file manually.');
+          console.error(error);
+        });
+    }
+
+    function processData(text) {
+      const parsedData = Papa.parse(text, {
+        header: true,
+        delimiter: '\t',
+        skipEmptyLines: true
+      }).data;
+
+      spots = parsedData.map(d => ({
+        x: parseFloat(d.x),
+        y: parseFloat(d.y),
+        z: parseFloat(d.z),
+        gene: d.gene_name,
+        id: d.spot_id
+      }));
+
+      makePointCloud();
+      animate();
     }
 
     function makePointCloud() {
+      if (pointCloud) {
+        scene.remove(pointCloud);
+      }
+
       const geometry = new THREE.BufferGeometry();
       const verts = new Float32Array(spots.length * 3);
 
+      // Calculate center of mass to center the cloud
+      let centerX = 0, centerY = 0, centerZ = 0;
+      spots.forEach(s => {
+        centerX += s.x;
+        centerY += s.y;
+        centerZ += s.z;
+      });
+      centerX /= spots.length;
+      centerY /= spots.length;
+      centerZ /= spots.length;
+
       spots.forEach((s, i) => {
-        verts[i*3]   = s.x - 4000;  // center adjust
-        verts[i*3+1] = s.y - 1800;
-        verts[i*3+2] = s.z - 150;
+        verts[3*i]   = s.x - centerX;
+        verts[3*i+1] = s.y - centerY;
+        verts[3*i+2] = s.z - centerZ;
       });
 
-      geometry.setAttribute( 'position',
-        new THREE.BufferAttribute(verts, 3) );
+      geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
 
       const material = new THREE.PointsMaterial({
         size: 20,
@@ -88,29 +140,39 @@
 
       pointCloud = new THREE.Points(geometry, material);
       scene.add(pointCloud);
+
+      // Adjust camera position based on data bounds
+      const maxDim = Math.max(
+              spots.reduce((max, s) => Math.max(max, Math.abs(s.x - centerX)), 0),
+              spots.reduce((max, s) => Math.max(max, Math.abs(s.y - centerY)), 0),
+              spots.reduce((max, s) => Math.max(max, Math.abs(s.z - centerZ)), 0)
+      );
+      camera.position.z = maxDim * 3;
+      controls.update();
     }
 
     function onWindowResize() {
-      camera.aspect = innerWidth/innerHeight;
+      camera.aspect = window.innerWidth/window.innerHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(innerWidth, innerHeight);
+      renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
     function onMouseMove(event) {
-      mouse.x = (event.clientX / innerWidth) * 2 - 1;
-      mouse.y = -(event.clientY / innerHeight) * 2 + 1;
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
       tooltip.style.left = (event.clientX + 10) + 'px';
-      tooltip.style.top  = (event.clientY + 10) + 'px';
+      tooltip.style.top = (event.clientY + 10) + 'px';
     }
 
     function animate() {
       requestAnimationFrame(animate);
+      controls.update();
       renderer.render(scene, camera);
 
       if (!pointCloud) return;
       raycaster.setFromCamera(mouse, camera);
       const hits = raycaster.intersectObject(pointCloud);
-      if (hits.length > 0) {
+      if (hits.length) {
         const idx = hits[0].index;
         const spot = spots[idx];
         tooltip.textContent = `${spot.gene} (ID: ${spot.id})`;
