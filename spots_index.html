@@ -35,25 +35,73 @@
     let hoveredIndex = null;
 
     const POINT_SIZE = 2.0
+    const SHAPES = {
+        'Plp1': 1.0,    // triangle up
+        'Zbtb20': 2.0,  // triangle down
+        'Enc1': 3.0,    // cross
+        'default': 0.0  // circle
+    };
 
+    // Update the vertex shader to pass the shape to fragment shader
     const vertexShader = `
-      attribute float size;
-      attribute vec3 color;
-      varying vec3 vColor;
-      void main() {
-        vColor = color;
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = size * (3000.0 / -mvPosition.z);
-        gl_Position = projectionMatrix * mvPosition;
-      }
+        attribute float size;
+        attribute vec3 color;
+        attribute float shape;
+        varying vec3 vColor;
+        varying float vShape;
+        void main() {
+            vColor = color;
+            vShape = shape;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            mvPosition -= 1e-5;
+            gl_PointSize = size * (3000.0 / -mvPosition.z);
+            gl_Position = projectionMatrix * mvPosition;
+        }
     `;
 
+    // Update the fragment shader to handle different shapes
     const fragmentShader = `
-      varying vec3 vColor;
-      void main() {
-        if (length(gl_PointCoord - vec2(0.5, 0.5)) > 0.5) discard;
-        gl_FragColor = vec4(vColor, 1.0);
-      }
+        precision highp float;
+        varying vec3 vColor;
+        varying float vShape;
+        void main() {
+            // Convert point coordinates to [-1, 1] range
+            vec2 p = (gl_PointCoord * 2.0 - 1.0);
+            
+            // Anti-aliasing factor
+            float aa = 0.02;
+            
+            // Base alpha
+            float alpha = 1.0;
+
+            if (vShape == 0.0) {  // Circle
+                float d = length(p);
+                alpha = smoothstep(1.0 + aa, 1.0 - aa, d);
+            } 
+            else if (vShape == 1.0) {  // Triangle Up
+                float d = max(
+                    abs(p.x) * 0.866025 + p.y * 0.5,
+                    -p.y
+                ) - 0.5;
+                alpha = smoothstep(aa, -aa, d);
+            }
+            else if (vShape == 2.0) {  // Triangle Down
+                float d = max(
+                    abs(p.x) * 0.866025 - p.y * 0.5,
+                    p.y
+                ) - 0.5;
+                alpha = smoothstep(aa, -aa, d);
+            }
+            else if (vShape == 3.0) {  // Cross
+                float d1 = abs(p.x - p.y);
+                float d2 = abs(p.x + p.y);
+                float d = min(d1, d2);
+                alpha = 1.0 - smoothstep(0.1 - aa, 0.1 + aa, d);
+            }
+            
+            if (alpha < 0.01) discard;
+            gl_FragColor = vec4(vColor, alpha);
+        }
     `;
 
     init();
@@ -66,7 +114,10 @@
       camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 100, 100000);
       camera.position.set(0, 0, 5000);
 
-      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer = new THREE.WebGLRenderer({
+        logarithmicDepthBuffer: true,
+        antialias: true 
+      });
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
 
@@ -154,6 +205,15 @@
       sizes.fill(POINT_SIZE);
       geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
+
+      // Create shape attribute
+      const shapes = new Float32Array(spots.length);
+      spots.forEach((spot, i) => {
+          shapes[i] = SHAPES[spot.gene] || SHAPES.default;
+      });
+      geometry.setAttribute('shape', new THREE.BufferAttribute(shapes, 1));
+
+
       // Create color attribute
       const colors = new Float32Array(spots.length * 3);
       for (let i = 0; i < spots.length; i++) {
@@ -166,10 +226,15 @@
       const material = new THREE.ShaderMaterial({
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
-        transparent: true
+        transparent: true,
+        depthWrite: false, 
+        // depthTest: true,
+        alphaTest: 0.5,         // ← optional, makes shape edges consistent
+        blending: THREE.NormalBlending     
       });
 
       pointCloud = new THREE.Points(geometry, material);
+      pointCloud.renderOrder = 999;
       scene.add(pointCloud);
 
       const maxDim = Math.max(
@@ -212,7 +277,9 @@
           highlightPoint(idx);
           hoveredIndex = idx;
           const spot = spots[idx];
-          tooltip.textContent = `${spot.gene} (ID: ${spot.id})`;
+          tooltip.innerHTML = `${spot.gene} <br> 
+                                ID: ${spot.id} <br> 
+                                x,y,z: ${spot.x.toFixed(0)}, ${spot.y.toFixed(0)}, ${spot.z.toFixed(0)}`;
           tooltip.style.display = 'block';
         }
       } else {
