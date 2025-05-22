@@ -26,13 +26,21 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
+    <!-- Add shader imports -->
+  <!-- <script src="glyphs/vertex.js"></script>
+  <script src="glyphs/fragment.js"></script> -->
+
   <script>
     let camera, scene, renderer, raycaster, controls;
     let spots = [], pointCloud;
     const mouse = new THREE.Vector2();
     const tooltip = document.getElementById('tooltip');
     const fileInput = document.getElementById('fileInput');
+    const pointClouds = [];
     let hoveredIndex = null;
+    let hoveredPointCloud = null;
+    let previousHoveredIndex = null;
+    let previousHoveredPointCloud = null;
 
     const POINT_SIZE = 2.0
     const SHAPES = {
@@ -41,6 +49,24 @@
         'Enc1': 3.0,    // cross
         'default': 0.0  // circle
     };
+
+    // Add shader mapping
+    // const shaderMap = {
+    //     'asterisk': fShader_asterisk,
+    //     'circle': fShader_circle,
+    //     'cross': fShader_cross,
+    //     'diamond': fShader_diamond,
+    //     'point': fShader_point,
+    //     'plus': fShader_plus,
+    //     'square': fShader_square,
+    //     'star5': fShader_star5,
+    //     'star6': fShader_star6,
+    //     'triangleDown': fShader_triangleDown,
+    //     'triangleLeft': fShader_triangleLeft,
+    //     'triangleRight': fShader_triangleRight,
+    //     'triangleUp': fShader_triangleUp,
+    //     'solidSquare': fShader_solidSquare
+    // };
 
     // Update the vertex shader to pass the shape to fragment shader
     const vertexShader = `
@@ -162,6 +188,17 @@
     function processData(text) {
       const parsedData = d3.tsvParse(text);
 
+      function groupSpotsByGene(spots) {
+        return spots.reduce((groups, spot) => {
+          const gene = spot.gene;
+          if (!groups[gene]) {
+            groups[gene] = [];
+          }
+          groups[gene].push(spot);
+          return groups;
+        }, {});
+      }
+
       spots = parsedData.map(d => ({
         x: parseFloat(d.x),
         y: parseFloat(d.y),
@@ -169,15 +206,26 @@
         gene: d.gene_name,
         id: d.spot_id
       }));
+      // Group spots by gene name
 
-      makePointCloud();
+      spots = groupSpotsByGene(spots);
+      var keys = Object.keys(spots)
+      for (var i = 0; i < keys.length; i++) {
+        makePointCloud(spots[keys[i]]);
+      }
       animate();
     }
-
-    function makePointCloud() {
+    
+    function makePointCloud(spots) {
       if (pointCloud) {
-        scene.remove(pointCloud);
+        // scene.remove(pointCloud);
       }
+
+      var gene_name = [... new Set(spots.map(d=>d.gene))];
+      if (gene_name.length !== 1) {
+        throw new Error('Array contains more than one name');
+      }
+      gene_name = gene_name[0]
 
       const geometry = new THREE.BufferGeometry();
       const verts = new Float32Array(spots.length * 3);
@@ -209,7 +257,7 @@
       // Create shape attribute
       const shapes = new Float32Array(spots.length);
       spots.forEach((spot, i) => {
-          shapes[i] = SHAPES[spot.gene] || SHAPES.default;
+          shapes[i] = SHAPES[gene_name] || SHAPES.default;
       });
       geometry.setAttribute('shape', new THREE.BufferAttribute(shapes, 1));
 
@@ -223,18 +271,47 @@
       }
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
+
+      // Simplest possible vertex shader
+      const my_vertexShader = `
+          void main() {
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              gl_PointSize = 5.0;
+          }
+      `;
+
+      // Simplest possible fragment shader
+      const my_fragmentShader = `
+          void main() {
+              gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);  // Simple red color
+          }
+      `;
+
       const material = new THREE.ShaderMaterial({
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
+        uniforms: {
+            glyphSize: { value: POINT_SIZE },
+            dotSize: { value: POINT_SIZE * 0.5 },
+            zThres: { value: 5000.0 },
+            attenuate: { value: false },
+            r: { value: 0.0 },
+            g: { value: 1.0 },
+            b: { value: 0.8 },
+            a: { value: 1.0 }
+        },
         transparent: true,
-        depthWrite: false, 
-        // depthTest: true,
-        alphaTest: 0.5,         // ← optional, makes shape edges consistent
-        blending: THREE.NormalBlending     
-      });
+        depthWrite: false,
+        alphaTest: 0.5,
+        blending: THREE.NormalBlending
+    });
 
       pointCloud = new THREE.Points(geometry, material);
       pointCloud.renderOrder = 999;
+
+      //set the pointcloud's name
+      pointCloud.name = gene_name;
+      pointClouds.push(pointCloud);
       scene.add(pointCloud);
 
       const maxDim = Math.max(
@@ -260,39 +337,56 @@
     }
 
     function animate() {
-      requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
 
-      if (!pointCloud) return;
-      raycaster.setFromCamera(mouse, camera);
-      const hits = raycaster.intersectObject(pointCloud);
-      
-      if (hits.length) {
-        const idx = hits[0].index;
-        if (hoveredIndex !== idx) {
-          if (hoveredIndex !== null) {
-            resetPointAppearance(hoveredIndex);
-          }
-          highlightPoint(idx);
-          hoveredIndex = idx;
-          const spot = spots[idx];
-          tooltip.innerHTML = `${spot.gene} <br> 
+        if (!pointCloud) return;
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(pointClouds);
+        
+        if (hits.length) {
+            const newPointCloud = hits[0].object;
+            const newIndex = hits[0].index;
+            
+            // Only update if we're hovering over a different point
+            if (newIndex !== hoveredIndex || newPointCloud !== hoveredPointCloud) {
+                // Store the current hovered point as previous before updating
+                previousHoveredIndex = hoveredIndex;
+                previousHoveredPointCloud = hoveredPointCloud;
+                
+                // Reset the previous point if it exists
+                if (previousHoveredPointCloud !== null && previousHoveredIndex !== null) {
+                    resetPointAppearance(previousHoveredPointCloud, previousHoveredIndex);
+                }
+                
+                // Update to new point
+                hoveredPointCloud = newPointCloud;
+                hoveredIndex = newIndex;
+                highlightPoint(hoveredPointCloud, hoveredIndex);
+                
+                const spot = spots[hoveredPointCloud.name][hoveredIndex];
+                tooltip.innerHTML = `${spot.gene} <br> 
                                 ID: ${spot.id} <br> 
                                 x,y,z: ${spot.x.toFixed(0)}, ${spot.y.toFixed(0)}, ${spot.z.toFixed(0)}`;
-          tooltip.style.display = 'block';
+                tooltip.style.display = 'block';
+            }
+        } else {
+            // No point being hovered, reset the last hovered point
+            if (hoveredPointCloud !== null && hoveredIndex !== null) {
+                resetPointAppearance(hoveredPointCloud, hoveredIndex);
+            }
+            hoveredIndex = null;
+            hoveredPointCloud = null;
+            previousHoveredIndex = null;
+            previousHoveredPointCloud = null;
+            tooltip.style.display = 'none';
         }
-      } else {
-        if (hoveredIndex !== null) {
-          resetPointAppearance(hoveredIndex);
-          hoveredIndex = null;
-        }
-        tooltip.style.display = 'none';
-      }
     }
 
-    function highlightPoint(index) {
-      const geometry = pointCloud.geometry;
+    function highlightPoint(obj, index) {
+      console.log('highlighting point', obj.name, index)
+      const geometry = obj.geometry;
       const sizes = geometry.attributes.size.array;
       const colors = geometry.attributes.color.array;
 
@@ -306,8 +400,9 @@
       geometry.attributes.color.needsUpdate = true;
     }
 
-    function resetPointAppearance(index) {
-      const geometry = pointCloud.geometry;
+    function resetPointAppearance(obj,index) {
+      console.log('resetting point', obj.name, index)
+      const geometry = obj.geometry;
       const sizes = geometry.attributes.size.array;
       const colors = geometry.attributes.color.array;
 
