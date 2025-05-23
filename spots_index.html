@@ -102,25 +102,27 @@
             // Base alpha
             float alpha = 1.0;
 
-            if (vShape > -0.5 && vShape <= 0.5) {  // Circle
+            float tol = 0.1;
+
+            if (vShape > 0.0 - tol && vShape <= 0.0 + tol) {  // Circle
                 float d = length(p);
                 alpha = smoothstep(1.0 + aa, 1.0 - aa, d);
             } 
-            else if (vShape > 0.5 && vShape <= 1.5) {  // Triangle Up
+            else if (vShape > 1.0 - tol && vShape <= 1.0 + tol) {  // Triangle Up
                 float d = max(
                     abs(p.x) * 0.866025 + p.y * 0.5,
                     -p.y
                 ) - 0.5;
                 alpha = smoothstep(aa, -aa, d);
             }
-            else if (vShape > 1.5 && vShape <= 2.5) {  // Triangle Down
+            else if (vShape > 2.0 - tol && vShape <= 2.0 + tol) {  // Triangle Down
                 float d = max(
                     abs(p.x) * 0.866025 - p.y * 0.5,
                     p.y
                 ) - 0.5;
                 alpha = smoothstep(aa, -aa, d);
             }
-            else if (vShape > 2.5 && vShape <= 3.5) {  // Cross
+            else if (vShape > 3.0 - tol && vShape <= 3.0 + tol) {  // Cross
                 float d1 = abs(p.x - p.y);
                 float d2 = abs(p.x + p.y);
                 float d = min(d1, d2);
