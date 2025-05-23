@@ -26,6 +26,8 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
+  <script src="utils.js"></script>
+  <script src="glyphConfig.js"></script>
     <!-- Add shader imports -->
   <!-- <script src="glyphs/vertex.js"></script>
   <script src="glyphs/fragment.js"></script> -->
@@ -37,6 +39,7 @@
     const tooltip = document.getElementById('tooltip');
     const fileInput = document.getElementById('fileInput');
     const pointClouds = [];
+    let glyphConfig = null;
     let hoveredIndex = null;
     let hoveredPointCloud = null;
     let previousHoveredIndex = null;
@@ -140,6 +143,8 @@
       camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 100, 100000);
       camera.position.set(0, 0, 5000);
 
+      glyphConfig = glyphSettings();
+
       renderer = new THREE.WebGLRenderer({
         logarithmicDepthBuffer: true,
         antialias: true 
@@ -211,16 +216,19 @@
       spots = groupSpotsByGene(spots);
       var keys = Object.keys(spots)
       for (var i = 0; i < keys.length; i++) {
-        makePointCloud(spots[keys[i]]);
+        let gene = keys[i]
+        let gene_config = glyphConfig.filter(d => d.gene === gene || d.gene==='Generic');
+        makePointCloud(spots[gene], gene_config[0]);
       }
       animate();
     }
     
-    function makePointCloud(spots) {
+    function makePointCloud(spots, gene_config) {
       if (pointCloud) {
         // scene.remove(pointCloud);
       }
-
+      let hex = string2hex(gene_config.color)
+      let color = new THREE.Color(hex)
       var gene_name = [... new Set(spots.map(d=>d.gene))];
       if (gene_name.length !== 1) {
         throw new Error('Array contains more than one name');
@@ -265,9 +273,9 @@
       // Create color attribute
       const colors = new Float32Array(spots.length * 3);
       for (let i = 0; i < spots.length; i++) {
-        colors[i * 3] = 0;     // R
-        colors[i * 3 + 1] = 1; // G
-        colors[i * 3 + 2] = 0.8; // B
+        colors[i * 3] = color.r;     // R
+        colors[i * 3 + 1] = color.g; // G
+        colors[i * 3 + 2] = color.b; // B
       }
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
