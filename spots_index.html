@@ -82,7 +82,6 @@
             vColor = color;
             vShape = shape;
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            mvPosition -= 1e-5;
             gl_PointSize = size * (3000.0 / -mvPosition.z);
             gl_Position = projectionMatrix * mvPosition;
         }
@@ -103,25 +102,25 @@
             // Base alpha
             float alpha = 1.0;
 
-            if (vShape == 0.0) {  // Circle
+            if (vShape > -0.5 && vShape <= 0.5) {  // Circle
                 float d = length(p);
                 alpha = smoothstep(1.0 + aa, 1.0 - aa, d);
             } 
-            else if (vShape == 1.0) {  // Triangle Up
+            else if (vShape > 0.5 && vShape <= 1.5) {  // Triangle Up
                 float d = max(
                     abs(p.x) * 0.866025 + p.y * 0.5,
                     -p.y
                 ) - 0.5;
                 alpha = smoothstep(aa, -aa, d);
             }
-            else if (vShape == 2.0) {  // Triangle Down
+            else if (vShape > 1.5 && vShape <= 2.5) {  // Triangle Down
                 float d = max(
                     abs(p.x) * 0.866025 - p.y * 0.5,
                     p.y
                 ) - 0.5;
                 alpha = smoothstep(aa, -aa, d);
             }
-            else if (vShape == 3.0) {  // Cross
+            else if (vShape > 2.5 && vShape <= 3.5) {  // Cross
                 float d1 = abs(p.x - p.y);
                 float d2 = abs(p.x + p.y);
                 float d = min(d1, d2);
@@ -308,13 +307,13 @@
             a: { value: 1.0 }
         },
         transparent: true,
-        depthWrite: false,
+        depthTest: true,
+        depthWrite: true,
         alphaTest: 0.5,
         blending: THREE.NormalBlending
     });
 
       pointCloud = new THREE.Points(geometry, material);
-      pointCloud.renderOrder = 999;
 
       //set the pointcloud's name
       pointCloud.name = gene_name;
