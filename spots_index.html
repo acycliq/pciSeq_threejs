@@ -217,8 +217,8 @@
       var keys = Object.keys(spots)
       for (var i = 0; i < keys.length; i++) {
         let gene = keys[i]
-        let gene_config = glyphConfig.filter(d => d.gene === gene || d.gene==='Generic');
-        makePointCloud(spots[gene], gene_config[0]);
+        let gene_config = glyphConfig.filter(d => d.gene === gene || d.gene==='Generic')?.[0];
+        makePointCloud(spots[gene], gene_config);
       }
       animate();
     }
@@ -413,11 +413,14 @@
       const sizes = geometry.attributes.size.array;
       const colors = geometry.attributes.color.array;
 
+      let geneSettings = glyphConfig.filter(d => d.gene === obj.name || d.gene==='Generic')?.[0];
+      let originalColor = new THREE.Color(geneSettings.color)
+
       sizes[index] = POINT_SIZE;
 
-      colors[index * 3] = 0;     // R
-      colors[index * 3 + 1] = 1; // G
-      colors[index * 3 + 2] = 0.8; // B
+      colors[index * 3] = originalColor.r;     // R
+      colors[index * 3 + 1] = originalColor.g; // G
+      colors[index * 3 + 2] = originalColor.b; // B
 
       geometry.attributes.size.needsUpdate = true;
       geometry.attributes.color.needsUpdate = true;
