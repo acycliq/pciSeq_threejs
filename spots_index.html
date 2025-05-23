@@ -227,8 +227,7 @@
       if (pointCloud) {
         // scene.remove(pointCloud);
       }
-      let hex = string2hex(gene_config.color)
-      let color = new THREE.Color(hex)
+      let color = new THREE.Color(gene_config.color)
       var gene_name = [... new Set(spots.map(d=>d.gene))];
       if (gene_name.length !== 1) {
         throw new Error('Array contains more than one name');
