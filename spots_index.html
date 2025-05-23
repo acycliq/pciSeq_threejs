@@ -224,15 +224,15 @@
     }
     
     function makePointCloud(spots, gene_config) {
-      if (pointCloud) {
-        // scene.remove(pointCloud);
-      }
       let color = new THREE.Color(gene_config.color)
       var gene_name = [... new Set(spots.map(d=>d.gene))];
       if (gene_name.length !== 1) {
         throw new Error('Array contains more than one name');
       }
       gene_name = gene_name[0]
+      if (pointCloud?.name === gene_name) {
+        scene.remove(pointCloud);
+      }
 
       const geometry = new THREE.BufferGeometry();
       const verts = new Float32Array(spots.length * 3);
